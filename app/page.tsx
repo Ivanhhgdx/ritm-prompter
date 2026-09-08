@@ -1,6 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef, type CSSProperties } from 'react';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type CSSProperties,
+} from 'react';
 import { usePrompter } from '@/hooks/use-prompter';
 import { useReadingMotion } from '@/hooks/use-reading-motion';
 import { useFullscreen } from '@/hooks/use-fullscreen';
@@ -89,6 +95,36 @@ export default function Home() {
       localStorage.setItem('ritm-alignment', alignment);
     } catch {}
   }, [alignment, restored]);
+  const motion = useReadingMotion(
+    scroller,
+    engine.cursor,
+    engine.running,
+    engine.wpm,
+    smooth,
+    text,
+    fontSize,
+    100,
+    'voice',
+    alignment,
+  );
+  const toggleReading = useCallback(() => {
+    if (engine.running || engine.connecting) {
+      engine.stop();
+      return;
+    }
+    const fromWord = motion.prepareResume();
+    engine.start(fromWord === null ? undefined : fromWord);
+  }, [
+    engine.running,
+    engine.connecting,
+    engine.stop,
+    engine.start,
+    motion.prepareResume,
+  ]);
+  const resetReading = useCallback(() => {
+    motion.resetView();
+    engine.reset();
+  }, [motion.resetView, engine.reset]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
@@ -105,34 +141,25 @@ export default function Home() {
         return;
       if (event.code === 'Space') {
         event.preventDefault();
-        engine.toggle();
+        toggleReading();
       }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
+        motion.clearManualPosition();
         engine.seek(engine.cursor + (event.key === 'ArrowDown' ? 4 : -4));
       }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, [
-    engine.toggle,
+    toggleReading,
+    motion.clearManualPosition,
     engine.seek,
     engine.cursor,
     help,
     fullscreen.homeScreenHelp,
   ]);
-  useReadingMotion(
-    scroller,
-    engine.cursor,
-    engine.running,
-    engine.wpm,
-    smooth,
-    text,
-    fontSize,
-    100,
-    'voice',
-    alignment,
-  );
+
   let wordIndex = 0;
   const words = text.trim().split(/\s+/).filter(Boolean).length;
   const progress = words ? Math.round(((engine.cursor + 1) / words) * 100) : 0;
@@ -373,7 +400,12 @@ export default function Home() {
                 <span />
               </div>
             )}
-            <div className="script-scroll" ref={scroller}>
+            <div
+              className="script-scroll"
+              ref={scroller}
+              tabIndex={0}
+              aria-label="Текст суфлёра. На паузе прокрутите до нужной строки и продолжите чтение."
+            >
               <article
                 className="script-content"
                 style={
@@ -435,11 +467,11 @@ export default function Home() {
                 <button
                   className="icon-button"
                   aria-label="В начало"
-                  onClick={engine.reset}
+                  onClick={resetReading}
                 >
                   <RotateCcw size={18} />
                 </button>
-                <button className="start-button" onClick={engine.toggle}>
+                <button className="start-button" onClick={toggleReading}>
                   {engine.running ? (
                     <Pause size={17} fill="currentColor" />
                   ) : (
@@ -545,8 +577,11 @@ export default function Home() {
             под речь.
           </DialogDescription>
           <p>
-            На паузах движение замедляется. Повтор предыдущей фразы возвращает
-            текст назад. Кнопка в правом верхнем углу разворачивает суфлёр.
+            На паузе можно прокрутить текст пальцем или колёсиком до нужной
+            строки у центральной полоски. Нажмите «Продолжить», чтобы читать с
+            этого места. На паузах движение замедляется. Повтор предыдущей фразы
+            возвращает текст назад. Кнопка в правом верхнем углу разворачивает
+            суфлёр.
           </p>
           <p>
             Для чтения без панелей Safari добавьте сайт на экран «Домой» через

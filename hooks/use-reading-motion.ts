@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useRef, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
+import { ManualPosition } from '@/lib/manual-position';
 import { ReadingMotion } from '@/lib/reading-motion';
 export function useReadingMotion(
   scroller: RefObject<HTMLDivElement | null>,
@@ -16,13 +17,17 @@ export function useReadingMotion(
   const controller = useRef(new ReadingMotion()),
     frames = useRef(0),
     lastTime = useRef(0);
+  const selection = useRef(new ManualPosition());
+  const previousState = useRef({ cursor, running });
   const metrics = useRef<{
+    centers: number[];
     anchors: number[];
     paragraphNext: number[];
     line: number;
     viewport: number;
     pixelsPerWord: number;
   }>({
+    centers: [],
     anchors: [],
     paragraphNext: [],
     line: 74,
@@ -37,6 +42,10 @@ export function useReadingMotion(
     const frame = (now: number) => {
       const el = scroller.current;
       if (!el) return;
+      if (selection.current.armed || selection.current.dirty) {
+        controller.current.reset(el.scrollTop);
+        return;
+      }
       const { line, viewport } = metrics.current;
       const dt = (now - lastTime.current) / 1000;
       lastTime.current = now;
@@ -53,6 +62,40 @@ export function useReadingMotion(
     frames.current = requestAnimationFrame(frame);
   };
   useEffect(() => {
+    selection.current.clear();
+  }, [text]);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const begin = () => {
+      if (state.current.running) return;
+      selection.current.begin(el.scrollTop);
+      cancelAnimationFrame(frames.current);
+      controller.current.reset(el.scrollTop);
+    };
+    const scroll = () => {
+      if (selection.current.scroll(el.scrollTop)) {
+        cancelAnimationFrame(frames.current);
+        controller.current.reset(el.scrollTop);
+      }
+    };
+    const key = (event: KeyboardEvent) => {
+      if (['PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) begin();
+    };
+    el.addEventListener('wheel', begin, { passive: true });
+    el.addEventListener('touchstart', begin, { passive: true });
+    el.addEventListener('pointerdown', begin, { passive: true });
+    el.addEventListener('scroll', scroll, { passive: true });
+    el.addEventListener('keydown', key);
+    return () => {
+      el.removeEventListener('wheel', begin);
+      el.removeEventListener('touchstart', begin);
+      el.removeEventListener('pointerdown', begin);
+      el.removeEventListener('scroll', scroll);
+      el.removeEventListener('keydown', key);
+    };
+  }, [scroller]);
+  useEffect(() => {
     const el = scroller.current;
     if (!el) return;
     const measure = () => {
@@ -60,6 +103,7 @@ export function useReadingMotion(
         nodes = Array.from(el.querySelectorAll<HTMLElement>('[data-word]'));
       if (!nodes.length) {
         metrics.current.anchors = [];
+        metrics.current.centers = [];
         return;
       }
       const article = el.querySelector<HTMLElement>('article');
@@ -117,6 +161,7 @@ export function useReadingMotion(
         }
       }
       metrics.current = {
+        centers,
         anchors,
         paragraphNext,
         line,
@@ -128,6 +173,10 @@ export function useReadingMotion(
         0,
         Math.min(paragraphNext[current] ?? current, anchors.length - 1),
       );
+      if (selection.current.shouldHold(current)) {
+        controller.current.reset(el.scrollTop);
+        return;
+      }
       controller.current.reset(anchors[index] || 0);
       el.scrollTop = controller.current.position;
       drive();
@@ -145,7 +194,18 @@ export function useReadingMotion(
   useEffect(() => {
     const el = scroller.current,
       { anchors, paragraphNext, pixelsPerWord } = metrics.current;
+    const previous = previousState.current;
+    previousState.current = { cursor, running };
     if (!el || !anchors.length) return;
+    if (
+      selection.current.shouldHold(cursor) ||
+      (previous.cursor === cursor && previous.running !== running)
+    ) {
+      // Pause/resume freezes the current view; it never seeks to an old anchor.
+      cancelAnimationFrame(frames.current);
+      controller.current.reset(el.scrollTop);
+      return;
+    }
     const nextParagraph = paragraphNext[cursor];
     const target =
       anchors[
@@ -174,5 +234,26 @@ export function useReadingMotion(
     // drive reads current state through refs, retaining velocity between speech packets.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursor, running, wpm, smooth, mode]);
+  const prepareResume = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return null;
+    cancelAnimationFrame(frames.current);
+    const top = el.scrollTop;
+    controller.current.reset(top);
+    const fromWord = selection.current.resume(metrics.current.centers, top);
+    el.scrollTop = top;
+    return fromWord;
+  }, [scroller]);
+  const clearManualPosition = useCallback(() => {
+    selection.current.clear();
+  }, []);
+  const resetView = useCallback(() => {
+    selection.current.clear();
+    cancelAnimationFrame(frames.current);
+    const top = metrics.current.anchors[0] || 0;
+    controller.current.reset(top);
+    if (scroller.current) scroller.current.scrollTop = top;
+  }, [scroller]);
   useEffect(() => () => cancelAnimationFrame(frames.current), []);
+  return { prepareResume, clearManualPosition, resetView };
 }

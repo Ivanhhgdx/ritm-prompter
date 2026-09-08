@@ -100,153 +100,159 @@ export function usePrompter(
       cancelled = true;
     };
   }, [lang]);
-  const start = useCallback(() => {
-    if (wanted.current) return;
-    if (!words.length) {
-      setError('Добавьте текст во вкладке «Текст».');
-      return;
-    }
-    if (position.current >= words.length - 1) {
-      move(-1);
-      setElapsed(0);
-    }
-    setError('');
-    setHeard('');
-    wanted.current = true;
-    const ticket = ++generation.current;
-    attempts.current = 0;
-    progressSamples.current = [];
-    if (mode === 'auto') {
-      setRunning(true);
-      setStatus('Автопрокрутка');
-      return;
-    }
-    const Ctor = speechConstructor();
-    if (!Ctor) {
-      stop();
-      setError(
-        'Этот браузер не поддерживает распознавание речи. Откройте сайт в Chrome или Safari либо выберите автопрокрутку.',
-      );
-      return;
-    }
-    if (!window.isSecureContext) {
-      stop();
-      setError('Для микрофона откройте сайт по защищённой ссылке HTTPS.');
-      return;
-    }
-    setConnecting(true);
-    setStatus('Подключаю микрофон…');
-    // Keep start() in the original click gesture, including Safari.
-    const processLocally = localReady.current;
-    setLocal(processLocally);
-    const launch = () => {
-      if (!wanted.current || ticket !== generation.current) return;
-      const r = new Ctor();
-      recognition.current = r;
-      r.lang = lang;
-      r.continuous = true;
-      r.interimResults = true;
-      r.maxAlternatives = 1;
-      if (processLocally) r.processLocally = true;
-      let previousTranscript = '';
-      r.onstart = () => {
-        if (ticket !== generation.current) return;
-        if (watchdog.current) clearTimeout(watchdog.current);
-        setError('');
-        started.current = performance.now();
-        lastHeard.current = performance.now();
-        setConnecting(false);
-        setRunning(true);
-        setStatus('Слушаю. Начните читать');
-      };
-      r.onresult = (e) => {
-        if (!wanted.current || ticket !== generation.current) return;
-        const segments: string[] = [];
-        for (
-          let i = Math.max(0, e.results.length - 3);
-          i < e.results.length;
-          i++
-        )
-          segments.push(e.results[i][0].transcript);
-        const transcript = segments.join(' ').trim();
-        if (!transcript || transcript === previousTranscript) return;
-        previousTranscript = transcript;
-        attempts.current = 0;
-        lastHeard.current = performance.now();
-        setHeard(transcript.split(/\s+/).slice(-14).join(' '));
-        const found = matcher.locate(transcript, position.current);
-        if (!found) {
-          setStatus('Жду фразу из текста');
-          return;
-        }
-        const old = position.current;
-        move(found.index);
-        setStatus(
-          found.index < old - 2 ? 'Вернулись к фразе' : 'Следую за голосом',
-        );
-        const now = performance.now();
-        if (found.index < old) progressSamples.current = [];
-        if (found.index > old) {
-          progressSamples.current.push({ time: now, index: found.index });
-          progressSamples.current = progressSamples.current.filter(
-            (s) => now - s.time < 12000,
-          );
-          const first = progressSamples.current[0];
-          if (now - first.time > 1500) {
-            const pace = Math.round(
-              ((found.index - first.index) * 60000) / (now - first.time),
-            );
-            if (pace > 0 && pace < 600)
-              setWpm((tempo) =>
-                tempo ? Math.round(tempo * 0.65 + pace * 0.35) : pace,
-              );
-          }
-        }
-        if (found.index >= words.length - 1) {
-          stop();
-          setStatus('Текст прочитан');
-        }
-      };
-      r.onerror = (e) => {
-        if (ticket !== generation.current) return;
-        if (e.error === 'no-speech') {
-          setStatus('Жду вашу речь');
-          return;
-        }
-        stop();
-        setError(speechError(e.error));
-      };
-      r.onend = () => {
-        if (!wanted.current || ticket !== generation.current) return;
-        recognition.current = null;
-        if (performance.now() - started.current < 1500) attempts.current++;
-        else attempts.current = 0;
-        if (attempts.current >= 3) {
-          stop();
-          setError(
-            'Распознавание прерывается. Попробуйте другой браузер или автопрокрутку.',
-          );
-          return;
-        }
-        setStatus('Жду вашу речь');
-        restart.current = setTimeout(launch, 350 + attempts.current * 400);
-      };
-      try {
-        started.current = performance.now();
-        r.start();
-        watchdog.current = setTimeout(() => {
-          if (ticket === generation.current)
-            setError(
-              'Браузер пока не запустил микрофон. Проверьте запрос разрешения у адресной строки. В Safari также проверьте, что Siri включена в системных настройках. Можно нажать «Отменить» и повторить запуск.',
-            );
-        }, 15000);
-      } catch {
-        stop();
-        setError('Микрофон не запустился. Попробуйте ещё раз.');
+  const start = useCallback(
+    (fromWord?: number) => {
+      if (wanted.current) return;
+      if (!words.length) {
+        setError('Добавьте текст во вкладке «Текст».');
+        return;
       }
-    };
-    launch();
-  }, [matcher, lang, mode, words.length, move, stop]);
+      if (fromWord !== undefined && Number.isFinite(fromWord)) {
+        move(Math.max(0, Math.min(words.length - 1, Math.floor(fromWord))) - 1);
+        setWpm(0);
+      } else if (position.current >= words.length - 1) {
+        move(-1);
+        setElapsed(0);
+      }
+      setError('');
+      setHeard('');
+      wanted.current = true;
+      const ticket = ++generation.current;
+      attempts.current = 0;
+      progressSamples.current = [];
+      if (mode === 'auto') {
+        setRunning(true);
+        setStatus('Автопрокрутка');
+        return;
+      }
+      const Ctor = speechConstructor();
+      if (!Ctor) {
+        stop();
+        setError(
+          'Этот браузер не поддерживает распознавание речи. Откройте сайт в Chrome или Safari либо выберите автопрокрутку.',
+        );
+        return;
+      }
+      if (!window.isSecureContext) {
+        stop();
+        setError('Для микрофона откройте сайт по защищённой ссылке HTTPS.');
+        return;
+      }
+      setConnecting(true);
+      setStatus('Подключаю микрофон…');
+      // Keep start() in the original click gesture, including Safari.
+      const processLocally = localReady.current;
+      setLocal(processLocally);
+      const launch = () => {
+        if (!wanted.current || ticket !== generation.current) return;
+        const r = new Ctor();
+        recognition.current = r;
+        r.lang = lang;
+        r.continuous = true;
+        r.interimResults = true;
+        r.maxAlternatives = 1;
+        if (processLocally) r.processLocally = true;
+        let previousTranscript = '';
+        r.onstart = () => {
+          if (ticket !== generation.current) return;
+          if (watchdog.current) clearTimeout(watchdog.current);
+          setError('');
+          started.current = performance.now();
+          lastHeard.current = performance.now();
+          setConnecting(false);
+          setRunning(true);
+          setStatus('Слушаю. Начните читать');
+        };
+        r.onresult = (e) => {
+          if (!wanted.current || ticket !== generation.current) return;
+          const segments: string[] = [];
+          for (
+            let i = Math.max(0, e.results.length - 3);
+            i < e.results.length;
+            i++
+          )
+            segments.push(e.results[i][0].transcript);
+          const transcript = segments.join(' ').trim();
+          if (!transcript || transcript === previousTranscript) return;
+          previousTranscript = transcript;
+          attempts.current = 0;
+          lastHeard.current = performance.now();
+          setHeard(transcript.split(/\s+/).slice(-14).join(' '));
+          const found = matcher.locate(transcript, position.current);
+          if (!found) {
+            setStatus('Жду фразу из текста');
+            return;
+          }
+          const old = position.current;
+          move(found.index);
+          setStatus(
+            found.index < old - 2 ? 'Вернулись к фразе' : 'Следую за голосом',
+          );
+          const now = performance.now();
+          if (found.index < old) progressSamples.current = [];
+          if (found.index > old) {
+            progressSamples.current.push({ time: now, index: found.index });
+            progressSamples.current = progressSamples.current.filter(
+              (s) => now - s.time < 12000,
+            );
+            const first = progressSamples.current[0];
+            if (now - first.time > 1500) {
+              const pace = Math.round(
+                ((found.index - first.index) * 60000) / (now - first.time),
+              );
+              if (pace > 0 && pace < 600)
+                setWpm((tempo) =>
+                  tempo ? Math.round(tempo * 0.65 + pace * 0.35) : pace,
+                );
+            }
+          }
+          if (found.index >= words.length - 1) {
+            stop();
+            setStatus('Текст прочитан');
+          }
+        };
+        r.onerror = (e) => {
+          if (ticket !== generation.current) return;
+          if (e.error === 'no-speech') {
+            setStatus('Жду вашу речь');
+            return;
+          }
+          stop();
+          setError(speechError(e.error));
+        };
+        r.onend = () => {
+          if (!wanted.current || ticket !== generation.current) return;
+          recognition.current = null;
+          if (performance.now() - started.current < 1500) attempts.current++;
+          else attempts.current = 0;
+          if (attempts.current >= 3) {
+            stop();
+            setError(
+              'Распознавание прерывается. Попробуйте другой браузер или автопрокрутку.',
+            );
+            return;
+          }
+          setStatus('Жду вашу речь');
+          restart.current = setTimeout(launch, 350 + attempts.current * 400);
+        };
+        try {
+          started.current = performance.now();
+          r.start();
+          watchdog.current = setTimeout(() => {
+            if (ticket === generation.current)
+              setError(
+                'Браузер пока не запустил микрофон. Проверьте запрос разрешения у адресной строки. В Safari также проверьте, что Siri включена в системных настройках. Можно нажать «Отменить» и повторить запуск.',
+              );
+          }, 15000);
+        } catch {
+          stop();
+          setError('Микрофон не запустился. Попробуйте ещё раз.');
+        }
+      };
+      launch();
+    },
+    [matcher, lang, mode, words.length, move, stop],
+  );
   const toggle = useCallback(() => {
     if (wanted.current) stop();
     else void start();
