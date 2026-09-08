@@ -5,12 +5,19 @@ import {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   type CSSProperties,
 } from 'react';
 import { usePrompter } from '@/hooks/use-prompter';
 import { useReadingMotion } from '@/hooks/use-reading-motion';
+import { useMobileRecorder } from '@/hooks/use-mobile-recorder';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 import {
+  Camera,
+  CameraOff,
+  Download,
+  X,
+  Video,
   AudioLines,
   AlignLeft,
   AlignCenter,
@@ -33,6 +40,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -47,6 +55,12 @@ import { SAMPLE, LEGACY_SAMPLE } from '@/lib/sample';
 export default function Home() {
   const [text, setText] = useState(SAMPLE);
 
+  const [compact, setCompact] = useState(false);
+  // Only the reader changes; editing, saving and speech alignment use the original.
+  const readerText = useMemo(
+    () => (compact ? text.replace(/[ \t]*[\r\n]+[ \t\r\n]*/g, ' ') : text),
+    [text, compact],
+  );
   const [fontSize, setFontSize] = useState(48);
   const [alignment, setAlignment] = useState<'left' | 'center' | 'right'>(
     'center',
@@ -56,6 +70,7 @@ export default function Home() {
   const scroller = useRef<HTMLDivElement>(null);
   const prompter = useRef<HTMLElement>(null);
   const fullscreen = useFullscreen(prompter);
+  const camera = useMobileRecorder(fullscreen.expandInWindow, engine.stop);
   const [smooth, setSmooth] = useState(true);
   const [help, setHelp] = useState(false);
   const [restored, setRestored] = useState(false);
@@ -65,6 +80,7 @@ export default function Home() {
       const draft = localStorage.getItem('ritm-script');
       if (draft !== null && draft.length <= 100000)
         setText(draft === LEGACY_SAMPLE ? SAMPLE : draft);
+      setCompact(localStorage.getItem('ritm-compact') === 'true');
       const storedAlignment = localStorage.getItem('ritm-alignment');
       if (
         storedAlignment === 'left' ||
@@ -93,15 +109,16 @@ export default function Home() {
     if (!restored) return;
     try {
       localStorage.setItem('ritm-alignment', alignment);
+      localStorage.setItem('ritm-compact', String(compact));
     } catch {}
-  }, [alignment, restored]);
+  }, [alignment, compact, restored]);
   const motion = useReadingMotion(
     scroller,
     engine.cursor,
     engine.running,
     engine.wpm,
     smooth,
-    text,
+    readerText,
     fontSize,
     100,
     'voice',
@@ -128,6 +145,7 @@ export default function Home() {
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
+        camera.review ||
         help ||
         fullscreen.homeScreenHelp ||
         event.ctrlKey ||
@@ -135,7 +153,7 @@ export default function Home() {
         event.altKey ||
         (event.target instanceof Element &&
           event.target.closest(
-            'input,textarea,button,[role="slider"],[role="tab"],[role="switch"],[role="radio"],[contenteditable="true"]',
+            'input,textarea,button,[role="slider"],[role="tab"],[role="switch"],[role="radio"],[role="checkbox"],[contenteditable="true"]',
           ))
       )
         return;
@@ -157,6 +175,7 @@ export default function Home() {
     engine.seek,
     engine.cursor,
     help,
+    camera.review,
     fullscreen.homeScreenHelp,
   ]);
 
@@ -360,9 +379,22 @@ export default function Home() {
         </aside>
         <section
           ref={prompter}
-          className={`prompter${fullscreen.expanded ? ' is-expanded' : ''}`}
+          className={`prompter${fullscreen.expanded ? ' is-expanded' : ''}${camera.active ? ' has-camera' : ''}`}
         >
-          <div className="stage-toolbar">
+          {camera.active && (
+            <video
+              className="camera-preview"
+              ref={camera.video}
+              autoPlay
+              muted
+              playsInline
+              aria-label="Предпросмотр фронтальной камеры"
+              onClick={() => {
+                void camera.video.current?.play().catch(() => {});
+              }}
+            />
+          )}
+          <div className="stage-toolbar" inert={camera.review}>
             <div>
               <span className="document-icon">
                 <FileText size={16} />
@@ -372,28 +404,71 @@ export default function Home() {
                 {words} слов · ~{Math.max(1, Math.ceil(words / 140))} мин
               </span>
             </div>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={fullscreen.toggle}
-              aria-label={
-                fullscreen.expanded ? 'Выйти из полного экрана' : 'Полный экран'
-              }
-              title={
-                fullscreen.expanded
-                  ? 'Выйти из полного экрана (Esc)'
-                  : 'Полный экран'
-              }
-              aria-pressed={fullscreen.expanded}
-            >
-              {fullscreen.expanded ? (
-                <Minimize size={17} />
-              ) : (
-                <Maximize size={17} />
+            <div className="stage-actions">
+              {camera.clip && !camera.review && !camera.active && (
+                <button
+                  className="icon-button"
+                  aria-label="Открыть запись"
+                  onClick={() => {
+                    engine.stop();
+                    camera.setReview(true);
+                  }}
+                >
+                  <Video size={18} />
+                </button>
               )}
-            </button>
+              <button
+                type="button"
+                className="icon-button mobile-camera-button"
+                aria-label={
+                  camera.phase === 'opening'
+                    ? 'Отменить включение камеры'
+                    : camera.active
+                      ? 'Выключить камеру'
+                      : 'Включить камеру'
+                }
+                title={
+                  camera.active
+                    ? 'Выключить камеру'
+                    : 'Включить фронтальную камеру'
+                }
+                aria-pressed={camera.active}
+                onClick={() =>
+                  camera.active || camera.phase === 'opening'
+                    ? camera.close()
+                    : void camera.enable()
+                }
+              >
+                {camera.active ? <CameraOff size={18} /> : <Camera size={18} />}
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  if (fullscreen.expanded && camera.active) camera.close();
+                  fullscreen.toggle();
+                }}
+                aria-label={
+                  fullscreen.expanded
+                    ? 'Выйти из полного экрана'
+                    : 'Полный экран'
+                }
+                title={
+                  fullscreen.expanded
+                    ? 'Выйти из полного экрана (Esc)'
+                    : 'Полный экран'
+                }
+                aria-pressed={fullscreen.expanded}
+              >
+                {fullscreen.expanded ? (
+                  <Minimize size={17} />
+                ) : (
+                  <Maximize size={17} />
+                )}
+              </button>
+            </div>
           </div>
-          <div className="reading-stage">
+          <div className="reading-stage" inert={camera.review}>
             {guide && (
               <div className="focus-guide">
                 <ChevronRight size={18} />
@@ -416,7 +491,7 @@ export default function Home() {
                   } as CSSProperties
                 }
               >
-                {text.split('\n').map((line, i) => (
+                {readerText.split('\n').map((line, i) => (
                   <div className="script-line" key={i}>
                     {line
                       ? line.split(/(\s+)/).map((piece, j) =>
@@ -444,7 +519,17 @@ export default function Home() {
               ГОТОВЫ К ЗАПИСИ
             </div>
           </div>
-          <div className="transport">
+          <div className="transport" inert={camera.review}>
+            {camera.error && !camera.review && (
+              <p className="camera-error" role="alert">
+                {camera.error}
+              </p>
+            )}
+            {camera.phase === 'opening' && (
+              <p className="camera-note" role="status">
+                Разрешите фронтальную камеру и микрофон…
+              </p>
+            )}
             {engine.error && (
               <p
                 role="alert"
@@ -485,6 +570,17 @@ export default function Home() {
                         ? 'Продолжить'
                         : 'Начать чтение'}
                 </button>
+                <label
+                  className="compact-toggle"
+                  title="Скрыть переносы строк и пустые строки в суфлёре"
+                >
+                  <Checkbox
+                    checked={compact}
+                    onCheckedChange={setCompact}
+                    aria-label="Без переносов"
+                  />
+                  <span className="compact-label">Без переносов</span>
+                </label>
                 <span className="key-hint">пробел</span>
               </div>
               <span className="progress-label">{progress}% прочитано</span>
@@ -504,6 +600,147 @@ export default function Home() {
               </span>
             </div>
           </div>
+          {camera.active && (
+            <div className="camera-controls">
+              <div
+                className="recording-time"
+                role="timer"
+                aria-label="Время записи"
+              >
+                <span
+                  className={
+                    camera.phase === 'recording'
+                      ? 'recording-dot active'
+                      : 'recording-dot'
+                  }
+                />
+                {time(camera.seconds)}
+                <small>
+                  {camera.phase === 'paused'
+                    ? 'Пауза'
+                    : camera.phase === 'ready'
+                      ? 'Камера готова'
+                      : camera.phase === 'finishing'
+                        ? 'Подготовка…'
+                        : 'Запись'}
+                </small>
+              </div>
+              <button
+                className={`record-button${camera.phase !== 'ready' ? ' is-recording' : ''}`}
+                aria-label={
+                  camera.phase === 'ready'
+                    ? 'Начать запись видео'
+                    : 'Завершить запись видео'
+                }
+                disabled={camera.phase === 'finishing'}
+                onClick={() => {
+                  if (camera.phase === 'ready') {
+                    if (
+                      camera.record() &&
+                      !engine.running &&
+                      !engine.connecting
+                    )
+                      toggleReading();
+                  } else camera.finish();
+                }}
+              >
+                <span />
+              </button>
+              <div className="recording-actions">
+                {(camera.phase === 'recording' ||
+                  camera.phase === 'paused') && (
+                  <button
+                    className="icon-button"
+                    aria-label={
+                      camera.phase === 'paused'
+                        ? 'Продолжить запись видео'
+                        : 'Пауза записи видео'
+                    }
+                    onClick={() => {
+                      camera.togglePause();
+                      if (
+                        camera.phase === 'paused' &&
+                        !engine.running &&
+                        !engine.connecting
+                      )
+                        toggleReading();
+                    }}
+                  >
+                    {camera.phase === 'paused' ? (
+                      <Play size={20} />
+                    ) : (
+                      <Pause size={20} />
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {camera.review && camera.clip && (
+            <section className="camera-review" aria-label="Записанное видео">
+              <div className="camera-review-heading">
+                <strong>Ваш дубль</strong>
+                <button
+                  className="icon-button"
+                  aria-label="Закрыть просмотр записи"
+                  onClick={() => camera.setReview(false)}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <video
+                src={camera.clip.url}
+                controls
+                playsInline
+                className="recorded-video"
+              />
+              <div className="camera-review-footer">
+                {camera.error && (
+                  <p role="alert" className="camera-error">
+                    {camera.error}
+                  </p>
+                )}
+                <p className="camera-note">
+                  Видео без текста суфлёра ·{' '}
+                  {(camera.clip.file.size / 1024 / 1024).toFixed(1)} МБ.
+                  Сохраните его перед закрытием страницы.
+                </p>
+                <div className="camera-save-actions">
+                  {camera.canShare && (
+                    <button
+                      className="start-button"
+                      disabled={camera.sharing}
+                      onClick={() => void camera.share()}
+                    >
+                      <Share size={17} />
+                      Сохранить видео
+                    </button>
+                  )}
+                  <a
+                    className="script-preset-button"
+                    href={camera.clip.url}
+                    download={camera.clip.file.name}
+                  >
+                    <Download size={17} />
+                    Скачать файл
+                  </a>
+                  <button
+                    className="script-preset-button"
+                    onClick={() => void camera.enable()}
+                    disabled={camera.phase === 'opening'}
+                  >
+                    Новый дубль
+                  </button>
+                </div>
+                {camera.canShare && (
+                  <p className="camera-note">
+                    В меню iPhone выберите «Сохранить видео», если этот пункт
+                    доступен, или «Сохранить в Файлы».
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
         </section>
       </div>
       <footer className="app-footer">
@@ -515,59 +752,62 @@ export default function Home() {
           <span className="tiny-dot" />
         </span>
       </footer>
-      <Dialog
-        open={fullscreen.homeScreenHelp}
-        onOpenChange={fullscreen.setHomeScreenHelp}
-      >
-        <DialogContent className="help-dialog install-dialog">
-          <DialogTitle>Суфлёр без панелей Safari</DialogTitle>
-          <DialogDescription>
-            На iPhone откройте «Ритм» с экрана «Домой», чтобы читать без вкладок
-            и адресной строки.
-          </DialogDescription>
-          <ol className="install-steps">
-            <li>
-              <Share size={19} aria-hidden="true" />
-              <span>
-                В Safari нажмите <strong>«Поделиться»</strong>. Иногда эта
-                кнопка находится в меню «Ещё».
-              </span>
-            </li>
-            <li>
-              <PlusSquare size={19} aria-hidden="true" />
-              <span>
-                Выберите <strong>«На экран „Домой“»</strong>.
-              </span>
-            </li>
-            <li>
-              <span className="install-step-number">3</span>
-              <span>
-                Если есть переключатель{' '}
-                <strong>«Открыть как веб-приложение»</strong>, включите его и
-                нажмите «Добавить».
-              </span>
-            </li>
-            <li>
-              <span className="install-step-number">4</span>
-              <span>
-                Запустите <strong>«Ритм» с нового значка</strong>, поверните
-                телефон и нажмите кнопку полного экрана.
-              </span>
-            </li>
-          </ol>
-          <p className="field-note">
-            Во вкладке сайта кнопка не может скрыть панели самого Safari. Запуск
-            со значка убирает их; системные индикаторы iPhone могут оставаться.
-          </p>
-          <button
-            type="button"
-            className="script-preset-button"
-            onClick={fullscreen.expandInWindow}
-          >
-            Пока развернуть внутри Safari
-          </button>
-        </DialogContent>
-      </Dialog>
+      {fullscreen.homeScreenHelp && (
+        <Dialog
+          open={fullscreen.homeScreenHelp}
+          onOpenChange={fullscreen.setHomeScreenHelp}
+        >
+          <DialogContent className="help-dialog install-dialog">
+            <DialogTitle>Суфлёр без панелей Safari</DialogTitle>
+            <DialogDescription>
+              На iPhone откройте «Ритм» с экрана «Домой», чтобы читать без
+              вкладок и адресной строки.
+            </DialogDescription>
+            <ol className="install-steps">
+              <li>
+                <Share size={19} aria-hidden="true" />
+                <span>
+                  В Safari нажмите <strong>«Поделиться»</strong>. Иногда эта
+                  кнопка находится в меню «Ещё».
+                </span>
+              </li>
+              <li>
+                <PlusSquare size={19} aria-hidden="true" />
+                <span>
+                  Выберите <strong>«На экран „Домой“»</strong>.
+                </span>
+              </li>
+              <li>
+                <span className="install-step-number">3</span>
+                <span>
+                  Если есть переключатель{' '}
+                  <strong>«Открыть как веб-приложение»</strong>, включите его и
+                  нажмите «Добавить».
+                </span>
+              </li>
+              <li>
+                <span className="install-step-number">4</span>
+                <span>
+                  Запустите <strong>«Ритм» с нового значка</strong>, поверните
+                  телефон и нажмите кнопку полного экрана.
+                </span>
+              </li>
+            </ol>
+            <p className="field-note">
+              Во вкладке сайта кнопка не может скрыть панели самого Safari.
+              Запуск со значка убирает их; системные индикаторы iPhone могут
+              оставаться.
+            </p>
+            <button
+              type="button"
+              className="script-preset-button"
+              onClick={fullscreen.expandInWindow}
+            >
+              Пока развернуть внутри Safari
+            </button>
+          </DialogContent>
+        </Dialog>
+      )}
       <Dialog open={help} onOpenChange={setHelp}>
         <DialogContent className="help-dialog">
           <DialogTitle>Как читать с суфлёром</DialogTitle>
@@ -580,7 +820,9 @@ export default function Home() {
             На паузе можно прокрутить текст пальцем или колёсиком до нужной
             строки у центральной полоски. Нажмите «Продолжить», чтобы читать с
             этого места. На паузах движение замедляется. Повтор предыдущей фразы
-            возвращает текст назад. Кнопка в правом верхнем углу разворачивает
+            возвращает текст назад. Галочка «Без переносов» убирает пустые
+            строки и объединяет абзацы только в суфлёре; отключите её, чтобы
+            вернуть исходный вид. Кнопка в правом верхнем углу разворачивает
             суфлёр.
           </p>
           <p>
@@ -590,9 +832,11 @@ export default function Home() {
             потребоваться включённая Siri или диктовка.
           </p>
           <p>
-            Звук обрабатывает служба распознавания вашего браузера и может
-            передавать его на свои серверы. Сам сайт не записывает и не
-            сохраняет аудио. Для запуска может требоваться интернет.
+            Звук для прокрутки обрабатывает служба распознавания браузера и
+            может передавать его на свои серверы. В мобильном режиме камеры
+            видео со звуком записывается только после нажатия красной кнопки и
+            остаётся в этом браузере, пока вы не сохраните файл. На сервер сайта
+            запись не отправляется.
           </p>
         </DialogContent>
       </Dialog>
