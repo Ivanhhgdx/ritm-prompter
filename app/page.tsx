@@ -9,6 +9,8 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  Share,
+  PlusSquare,
   SlidersHorizontal,
   FileText,
   Maximize,
@@ -91,6 +93,7 @@ export default function Home() {
     const key = (event: KeyboardEvent) => {
       if (
         help ||
+        fullscreen.homeScreenHelp ||
         event.ctrlKey ||
         event.metaKey ||
         event.altKey ||
@@ -111,7 +114,13 @@ export default function Home() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [engine.toggle, engine.seek, engine.cursor, help]);
+  }, [
+    engine.toggle,
+    engine.seek,
+    engine.cursor,
+    help,
+    fullscreen.homeScreenHelp,
+  ]);
   useReadingMotion(
     scroller,
     engine.cursor,
@@ -474,6 +483,59 @@ export default function Home() {
           <span className="tiny-dot" />
         </span>
       </footer>
+      <Dialog
+        open={fullscreen.homeScreenHelp}
+        onOpenChange={fullscreen.setHomeScreenHelp}
+      >
+        <DialogContent className="help-dialog install-dialog">
+          <DialogTitle>Суфлёр без панелей Safari</DialogTitle>
+          <DialogDescription>
+            На iPhone откройте «Ритм» с экрана «Домой», чтобы читать без вкладок
+            и адресной строки.
+          </DialogDescription>
+          <ol className="install-steps">
+            <li>
+              <Share size={19} aria-hidden="true" />
+              <span>
+                В Safari нажмите <strong>«Поделиться»</strong>. Иногда эта
+                кнопка находится в меню «Ещё».
+              </span>
+            </li>
+            <li>
+              <PlusSquare size={19} aria-hidden="true" />
+              <span>
+                Выберите <strong>«На экран „Домой“»</strong>.
+              </span>
+            </li>
+            <li>
+              <span className="install-step-number">3</span>
+              <span>
+                Если есть переключатель{' '}
+                <strong>«Открыть как веб-приложение»</strong>, включите его и
+                нажмите «Добавить».
+              </span>
+            </li>
+            <li>
+              <span className="install-step-number">4</span>
+              <span>
+                Запустите <strong>«Ритм» с нового значка</strong>, поверните
+                телефон и нажмите кнопку полного экрана.
+              </span>
+            </li>
+          </ol>
+          <p className="field-note">
+            Во вкладке сайта кнопка не может скрыть панели самого Safari. Запуск
+            со значка убирает их; системные индикаторы iPhone могут оставаться.
+          </p>
+          <button
+            type="button"
+            className="script-preset-button"
+            onClick={fullscreen.expandInWindow}
+          >
+            Пока развернуть внутри Safari
+          </button>
+        </DialogContent>
+      </Dialog>
       <Dialog open={help} onOpenChange={setHelp}>
         <DialogContent className="help-dialog">
           <DialogTitle>Как читать с суфлёром</DialogTitle>
@@ -487,8 +549,10 @@ export default function Home() {
             текст назад. Кнопка в правом верхнем углу разворачивает суфлёр.
           </p>
           <p>
-            На iPhone можно повернуть телефон горизонтально. В Safari для
-            распознавания может потребоваться включённая Siri или диктовка.
+            Для чтения без панелей Safari добавьте сайт на экран «Домой» через
+            меню «Поделиться» и запускайте с его значка. На iPhone можно
+            повернуть телефон горизонтально. В Safari для распознавания может
+            потребоваться включённая Siri или диктовка.
           </p>
           <p>
             Звук обрабатывает служба распознавания вашего браузера и может

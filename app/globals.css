@@ -1271,3 +1271,57 @@ h2 {
     padding-bottom: 5px;
   }
 }
+
+.install-dialog {
+  max-width: min(440px, calc(100% - 32px));
+  gap: 16px;
+}
+.install-steps {
+  display: grid;
+  gap: 14px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.install-steps li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+  line-height: 1.5;
+  color: #c8d0d7;
+}
+.install-steps svg {
+  margin-top: 2px;
+  color: var(--accent);
+}
+.install-step-number {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #485444;
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.install-steps strong {
+  color: #eef2ec;
+  font-weight: 600;
+}
+.install-dialog .script-preset-button {
+  margin-top: 0;
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .install-dialog {
+    gap: 10px;
+    padding: 16px;
+    max-height: 90dvh;
+  }
+  .install-steps {
+    gap: 9px;
+  }
+  .install-dialog .field-note {
+    margin-top: 0;
+  }
+}

@@ -18,6 +18,7 @@ type FullscreenElement = HTMLElement & {
 
 export function useFullscreen(target: RefObject<HTMLElement | null>) {
   const [expanded, setExpanded] = useState(false);
+  const [homeScreenHelp, setHomeScreenHelp] = useState(false);
   const fallback = useRef(false);
   const pending = useRef(false);
   const mounted = useRef(false);
@@ -42,6 +43,12 @@ export function useFullscreen(target: RefObject<HTMLElement | null>) {
     returnFocus.current?.focus({ preventScroll: true });
   }, [target]);
 
+  const expandInWindow = useCallback(() => {
+    fallback.current = true;
+    setHomeScreenHelp(false);
+    setExpanded(true);
+  }, []);
+
   const toggle = useCallback(() => {
     if (pending.current) return;
     if (expanded) {
@@ -56,13 +63,32 @@ export function useFullscreen(target: RefObject<HTMLElement | null>) {
         : null;
     const enterFallback = () => {
       if (!mounted.current) return;
-      fallback.current = true;
-      setExpanded(true);
+      const standalone =
+        (navigator as Navigator & { standalone?: boolean }).standalone ===
+          true ||
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches;
+      if (/iPhone|iPod/i.test(navigator.userAgent) && !standalone) {
+        // An in-tab expansion cannot remove iPhone Safari's own controls.
+        setHomeScreenHelp(true);
+        return;
+      }
+      expandInWindow();
     };
     errorHandler.current = enterFallback;
     const request =
       element.requestFullscreen || element.webkitRequestFullscreen;
-    if (!request) {
+    const standalone =
+      (navigator as Navigator & { standalone?: boolean }).standalone === true ||
+      window.matchMedia('(display-mode: standalone)').matches;
+    if (standalone) {
+      expandInWindow();
+      return;
+    }
+    if (
+      !request ||
+      (document.fullscreenEnabled === false && !element.webkitRequestFullscreen)
+    ) {
       enterFallback();
       return;
     }
@@ -79,7 +105,7 @@ export function useFullscreen(target: RefObject<HTMLElement | null>) {
       pending.current = false;
       enterFallback();
     }
-  }, [expanded, close, target]);
+  }, [expanded, close, target, expandInWindow]);
 
   useEffect(() => {
     mounted.current = true;
@@ -128,5 +154,11 @@ export function useFullscreen(target: RefObject<HTMLElement | null>) {
     };
   }, [expanded]);
 
-  return { expanded, toggle };
+  return {
+    expanded,
+    toggle,
+    homeScreenHelp,
+    setHomeScreenHelp,
+    expandInWindow,
+  };
 }
