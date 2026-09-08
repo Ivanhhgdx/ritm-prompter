@@ -11,6 +11,7 @@ export function useReadingMotion(
   fontSize: number,
   width: number,
   mode: string,
+  alignment: 'left' | 'center' | 'right' = 'center',
 ) {
   const controller = useRef(new ReadingMotion()),
     frames = useRef(0),
@@ -140,7 +141,7 @@ export function useReadingMotion(
     };
     // Geometry is rebuilt only when layout changes, never per animation frame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, fontSize, width, scroller]);
+  }, [text, fontSize, width, alignment, scroller]);
   useEffect(() => {
     const el = scroller.current,
       { anchors, paragraphNext, pixelsPerWord } = metrics.current;

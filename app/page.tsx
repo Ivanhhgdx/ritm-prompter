@@ -6,6 +6,9 @@ import { useReadingMotion } from '@/hooks/use-reading-motion';
 import { useFullscreen } from '@/hooks/use-fullscreen';
 import {
   AudioLines,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
   SlidersHorizontal,
   FileText,
   Maximize,
@@ -21,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -30,45 +34,15 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 
-export const SAMPLE = `Представляю Ритм —
-суфлёр, с которым всё просто.
-
-Я смотрю в камеру, говорю —
-и текст движется вместе со мной.
-Не нужно ловить строчку
-или подстраиваться под чужой темп.
-
-Можно сосредоточиться на мысли
-и говорить естественно.
-
-В основе — технология
-распознавания речи.
-Система сопоставляет мои слова
-со сценарием, оценивает темп
-и плавно корректирует прокрутку.
-
-Говорю быстрее —
-текст подстраивается.
-Замедляюсь —
-он тоже сбавляет скорость.
-
-Можно остановиться,
-собраться с мыслями
-и спокойно продолжить.
-
-Записать обращение,
-рассказать о своём проекте,
-поделиться важной историей.
-Просто смотреть в камеру
-и быть собой.
-
-Ритм. Ваша история —
-в вашем темпе.`;
+import { SAMPLE, LEGACY_SAMPLE } from '@/lib/sample';
 
 export default function Home() {
   const [text, setText] = useState(SAMPLE);
 
   const [fontSize, setFontSize] = useState(48);
+  const [alignment, setAlignment] = useState<'left' | 'center' | 'right'>(
+    'center',
+  );
   const [guide, setGuide] = useState(true);
   const engine = usePrompter(text, 'ru-RU', 'voice', 140);
   const scroller = useRef<HTMLDivElement>(null);
@@ -81,7 +55,15 @@ export default function Home() {
   useEffect(() => {
     try {
       const draft = localStorage.getItem('ritm-script');
-      if (draft !== null && draft.length <= 100000) setText(draft);
+      if (draft !== null && draft.length <= 100000)
+        setText(draft === LEGACY_SAMPLE ? SAMPLE : draft);
+      const storedAlignment = localStorage.getItem('ritm-alignment');
+      if (
+        storedAlignment === 'left' ||
+        storedAlignment === 'center' ||
+        storedAlignment === 'right'
+      )
+        setAlignment(storedAlignment);
     } catch {
       setSaved(false);
     }
@@ -100,6 +82,12 @@ export default function Home() {
     return () => clearTimeout(timeout);
   }, [text, restored]);
   useEffect(() => {
+    if (!restored) return;
+    try {
+      localStorage.setItem('ritm-alignment', alignment);
+    } catch {}
+  }, [alignment, restored]);
+  useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
         help ||
@@ -108,7 +96,7 @@ export default function Home() {
         event.altKey ||
         (event.target instanceof Element &&
           event.target.closest(
-            'input,textarea,button,[role="slider"],[role="tab"],[role="switch"],[contenteditable="true"]',
+            'input,textarea,button,[role="slider"],[role="tab"],[role="switch"],[role="radio"],[contenteditable="true"]',
           ))
       )
         return;
@@ -134,6 +122,7 @@ export default function Home() {
     fontSize,
     100,
     'voice',
+    alignment,
   );
   let wordIndex = 0;
   const words = text.trim().split(/\s+/).filter(Boolean).length;
@@ -232,6 +221,52 @@ export default function Home() {
                   <span>Аа</span>
                   <span>Аа</span>
                 </div>
+                <RadioGroup
+                  className="alignment-control"
+                  aria-label="Выравнивание текста"
+                  value={alignment}
+                  onValueChange={(value) => {
+                    if (
+                      value === 'left' ||
+                      value === 'center' ||
+                      value === 'right'
+                    )
+                      setAlignment(value);
+                  }}
+                  style={
+                    {
+                      '--alignment-position': [
+                        'left',
+                        'center',
+                        'right',
+                      ].indexOf(alignment),
+                    } as CSSProperties
+                  }
+                >
+                  <span className="alignment-indicator" aria-hidden="true" />
+                  {(
+                    [
+                      ['left', 'По левому краю', AlignLeft],
+                      ['center', 'По центру', AlignCenter],
+                      ['right', 'По правому краю', AlignRight],
+                    ] as const
+                  ).map(([value, label, Icon]) => (
+                    <label
+                      key={value}
+                      htmlFor={`alignment-${value}`}
+                      className="alignment-option"
+                      title={label}
+                    >
+                      <RadioGroupItem
+                        id={`alignment-${value}`}
+                        value={value}
+                        className="alignment-radio"
+                        aria-label={label}
+                      />
+                      <Icon size={18} aria-hidden="true" />
+                    </label>
+                  ))}
+                </RadioGroup>
                 <div className="control-label switch-row">
                   <label htmlFor="guide">Линия фокуса</label>
                   <Switch
@@ -335,6 +370,7 @@ export default function Home() {
                 style={
                   {
                     fontSize,
+                    textAlign: alignment,
                     '--reader-font-size': `${fontSize}px`,
                   } as CSSProperties
                 }

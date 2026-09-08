@@ -1169,3 +1169,105 @@ h2 {
     max-width: 900px;
   }
 }
+
+/* A sliding selection for the three reading alignments. */
+.alignment-control {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  padding: 4px;
+  margin-top: 12px;
+  border: 1px solid #353d43;
+  border-radius: 10px;
+  background: #111619;
+  isolation: isolate;
+}
+.alignment-indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) /3);
+  border: 1px solid #52634a;
+  border-radius: 7px;
+  background: #c7f0ae14;
+  transform: translateX(calc(var(--alignment-position, 1)*100%));
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+  z-index: -1;
+}
+.alignment-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  color: #8d98a2;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.alignment-control .alignment-radio {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.alignment-control .alignment-radio::after {
+  display: none;
+}
+.alignment-option:has([data-checked]) {
+  color: var(--accent);
+}
+.alignment-option:has(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.alignment-option:hover {
+  color: #e4eddc;
+}
+@media (pointer: coarse) {
+  .alignment-option {
+    height: 36px;
+  }
+}
+@media (max-width: 720px) and (orientation: portrait) {
+  .settings-panel > .settings-section:nth-child(3) .alignment-control {
+    margin-top: 5px;
+    padding: 3px;
+  }
+  .settings-panel > .settings-section:nth-child(3) .alignment-indicator {
+    top: 3px;
+    bottom: 3px;
+    left: 3px;
+    width: calc((100% - 6px) /3);
+  }
+  .settings-panel > .settings-section:nth-child(3) .switch-row {
+    margin-top: 8px;
+  }
+  .settings-panel
+    > .settings-section:nth-child(3)
+    .control-label:not(.switch-row) {
+    margin-bottom: 5px;
+  }
+  .settings-panel > .settings-section:nth-child(3) > h2 {
+    display: none;
+  }
+}
+@media (orientation: landscape) and (max-height: 560px) and (max-width: 1100px) {
+  .alignment-control {
+    margin-top: 5px;
+  }
+  .settings-panel > .settings-section:nth-child(3) .switch-row {
+    margin-top: 7px;
+  }
+  .settings-panel .settings-section {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+}
