@@ -56,6 +56,7 @@ export default function Home() {
   const [text, setText] = useState(SAMPLE);
 
   const [compact, setCompact] = useState(false);
+  const [twoLines, setTwoLines] = useState(false);
   // Only the reader changes; editing, saving and speech alignment use the original.
   const readerText = useMemo(
     () => (compact ? text.replace(/[ \t]*[\r\n]+[ \t\r\n]*/g, ' ') : text),
@@ -81,6 +82,7 @@ export default function Home() {
       if (draft !== null && draft.length <= 100000)
         setText(draft === LEGACY_SAMPLE ? SAMPLE : draft);
       setCompact(localStorage.getItem('ritm-compact') === 'true');
+      setTwoLines(localStorage.getItem('ritm-two-lines') === 'true');
       const storedAlignment = localStorage.getItem('ritm-alignment');
       if (
         storedAlignment === 'left' ||
@@ -110,8 +112,9 @@ export default function Home() {
     try {
       localStorage.setItem('ritm-alignment', alignment);
       localStorage.setItem('ritm-compact', String(compact));
+      localStorage.setItem('ritm-two-lines', String(twoLines));
     } catch {}
-  }, [alignment, compact, restored]);
+  }, [alignment, compact, twoLines, restored]);
   const motion = useReadingMotion(
     scroller,
     engine.cursor,
@@ -123,6 +126,7 @@ export default function Home() {
     100,
     'voice',
     alignment,
+    twoLines,
   );
   const toggleReading = useCallback(() => {
     if (engine.running || engine.connecting) {
@@ -379,7 +383,7 @@ export default function Home() {
         </aside>
         <section
           ref={prompter}
-          className={`prompter${fullscreen.expanded ? ' is-expanded' : ''}${camera.active ? ' has-camera' : ''}`}
+          className={`prompter${twoLines ? ' two-lines' : ''}${fullscreen.expanded ? ' is-expanded' : ''}${camera.active ? ' has-camera' : ''}`}
         >
           {camera.active && (
             <video
@@ -580,6 +584,17 @@ export default function Home() {
                     aria-label="Без переносов"
                   />
                   <span className="compact-label">Без переносов</span>
+                </label>
+                <label
+                  className="compact-toggle two-lines-toggle"
+                  title="Показывать две строки сверху — над телефоном у камеры"
+                >
+                  <Checkbox
+                    checked={twoLines}
+                    onCheckedChange={setTwoLines}
+                    aria-label="Две строки сверху"
+                  />
+                  <span>Две строки сверху</span>
                 </label>
                 <span className="key-hint">пробел</span>
               </div>

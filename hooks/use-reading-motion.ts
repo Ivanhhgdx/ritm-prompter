@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
-import { ManualPosition } from '@/lib/manual-position';
+import { findResumeWord, ManualPosition } from '@/lib/manual-position';
 import { ReadingMotion } from '@/lib/reading-motion';
 export function useReadingMotion(
   scroller: RefObject<HTMLDivElement | null>,
@@ -13,11 +13,13 @@ export function useReadingMotion(
   width: number,
   mode: string,
   alignment: 'left' | 'center' | 'right' = 'center',
+  twoLines = false,
 ) {
   const controller = useRef(new ReadingMotion()),
     frames = useRef(0),
     lastTime = useRef(0);
   const selection = useRef(new ManualPosition());
+  const measuredTwoLines = useRef(twoLines);
   const previousState = useRef({ cursor, running });
   const metrics = useRef<{
     centers: number[];
@@ -99,8 +101,14 @@ export function useReadingMotion(
     const el = scroller.current;
     if (!el) return;
     const measure = () => {
-      const box = el.getBoundingClientRect(),
-        nodes = Array.from(el.querySelectorAll<HTMLElement>('[data-word]'));
+      const layoutChanged = measuredTwoLines.current !== twoLines;
+      const manualWord =
+        layoutChanged && selection.current.shouldHold(state.current.cursor)
+          ? findResumeWord(metrics.current.centers, el.scrollTop)
+          : null;
+      measuredTwoLines.current = twoLines;
+      if (!twoLines) el.style.height = '';
+      const nodes = Array.from(el.querySelectorAll<HTMLElement>('[data-word]'));
       if (!nodes.length) {
         metrics.current.anchors = [];
         metrics.current.centers = [];
@@ -109,18 +117,20 @@ export function useReadingMotion(
       const article = el.querySelector<HTMLElement>('article');
       const line =
         parseFloat(getComputedStyle(article!).lineHeight) || fontSize * 1.55;
+      el.style.height = twoLines ? `${line * 2}px` : '';
+      el.parentElement?.style.setProperty('--reading-line-height', `${line}px`);
+      const box = el.getBoundingClientRect();
+      const focusY = twoLines ? line / 2 : box.height / 2;
       // Lift the reading position slightly to compensate for recognition latency.
-      const focusLead = line * 0.45;
+      const focusLead = twoLines ? 0 : line * 0.45;
       // Extra bottom space lets the final line reach the same reading position.
       if (article) {
-        article.style.paddingTop = `${box.height / 2}px`;
+        article.style.paddingTop = `${twoLines ? 0 : box.height / 2}px`;
         article.style.paddingBottom = `${box.height / 2 + focusLead}px`;
       }
       const centers = nodes.map((node) => {
         const rect = node.getBoundingClientRect();
-        return (
-          rect.top + rect.height / 2 - box.top + el.scrollTop - box.height / 2
-        );
+        return rect.top + rect.height / 2 - box.top + el.scrollTop - focusY;
       });
       const anchors: number[] = [];
       let total = 0,
@@ -140,7 +150,7 @@ export function useReadingMotion(
             0,
             centers[i] +
               focusLead +
-              ((i - start + 0.5) / count - 0.5) * line * 0.85,
+              (twoLines ? 0 : ((i - start + 0.5) / count - 0.5) * line * 0.85),
           );
         start = end;
       }
@@ -171,9 +181,12 @@ export function useReadingMotion(
       const current = state.current.cursor;
       const index = Math.max(
         0,
-        Math.min(paragraphNext[current] ?? current, anchors.length - 1),
+        Math.min(
+          manualWord ?? paragraphNext[current] ?? current,
+          anchors.length - 1,
+        ),
       );
-      if (selection.current.shouldHold(current)) {
+      if (!layoutChanged && selection.current.shouldHold(current)) {
         controller.current.reset(el.scrollTop);
         return;
       }
@@ -190,7 +203,7 @@ export function useReadingMotion(
     };
     // Geometry is rebuilt only when layout changes, never per animation frame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, fontSize, width, alignment, scroller]);
+  }, [text, fontSize, width, alignment, twoLines, scroller]);
   useEffect(() => {
     const el = scroller.current,
       { anchors, paragraphNext, pixelsPerWord } = metrics.current;

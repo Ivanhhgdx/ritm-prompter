@@ -1611,3 +1611,27 @@ h2 {
     overflow-y: auto;
   }
 }
+
+/* A two-line reading window above a phone standing against the screen. */
+.prompter.two-lines .script-scroll {
+  bottom: auto;
+  height: calc(var(--reading-line-height, 74px) * 2);
+}
+.prompter.two-lines .focus-guide {
+  top: 0;
+  height: var(--reading-line-height, 74px);
+  transform: none;
+}
+.prompter.two-lines .stage-label {
+  display: none;
+}
+.transport-buttons {
+  flex-wrap: wrap;
+}
+@media (max-width: 720px) {
+  .two-lines-toggle {
+    min-height: 36px;
+    font-size: 10px;
+    gap: 5px;
+  }
+}
