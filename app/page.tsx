@@ -436,6 +436,7 @@ export default function Home() {
                     ? 'Выключить камеру'
                     : 'Включить фронтальную камеру'
                 }
+                disabled={camera.phase === 'finishing'}
                 aria-pressed={camera.active}
                 onClick={() =>
                   camera.active || camera.phase === 'opening'
@@ -527,6 +528,11 @@ export default function Home() {
             {camera.error && !camera.review && (
               <p className="camera-error" role="alert">
                 {camera.error}
+              </p>
+            )}
+            {camera.phase === 'finishing' && (
+              <p className="camera-note" role="status" aria-live="polite">
+                Готовим видео к сохранению… Не закрывайте страницу.
               </p>
             )}
             {camera.phase === 'opening' && (
@@ -704,7 +710,10 @@ export default function Home() {
                 </button>
               </div>
               <video
+                key={camera.clip.url}
                 src={camera.clip.url}
+                preload="metadata"
+                onError={() => camera.setPlaybackError()}
                 controls
                 playsInline
                 className="recorded-video"
@@ -716,8 +725,10 @@ export default function Home() {
                   </p>
                 )}
                 <p className="camera-note">
-                  Видео без текста суфлёра ·{' '}
-                  {(camera.clip.file.size / 1024 / 1024).toFixed(1)} МБ.
+                  {camera.clip.prepared
+                    ? time(Math.round(camera.clip.duration))
+                    : 'Исходная запись'}{' '}
+                  · {(camera.clip.file.size / 1024 / 1024).toFixed(1)} МБ.
                   Сохраните его перед закрытием страницы.
                 </p>
                 <div className="camera-save-actions">
@@ -737,16 +748,26 @@ export default function Home() {
                     download={camera.clip.file.name}
                   >
                     <Download size={17} />
-                    Скачать файл
+                    {camera.clip.prepared
+                      ? 'Скачать файл'
+                      : 'Скачать исходную запись'}
                   </a>
                   <button
                     className="script-preset-button"
                     onClick={() => void camera.enable()}
-                    disabled={camera.phase === 'opening'}
+                    disabled={
+                      camera.phase === 'opening' || camera.phase === 'finishing'
+                    }
                   >
                     Новый дубль
                   </button>
                 </div>
+                {camera.clip.file.type === 'video/webm' && (
+                  <p className="camera-note">
+                    Этот браузер записывает WebM. Для сохранения в «Фото» на
+                    iPhone запишите видео в Safari.
+                  </p>
+                )}
                 {camera.canShare && (
                   <p className="camera-note">
                     В меню iPhone выберите «Сохранить видео», если этот пункт

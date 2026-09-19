@@ -1,9 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createRecorder } from '../lib/recording-format';
+import { finalizeRecording } from '../lib/finalize-recording';
 
 type Phase = 'off' | 'opening' | 'ready' | 'recording' | 'paused' | 'finishing';
-type Clip = { file: File; url: string };
+type Clip = { file: File; url: string; duration: number; prepared: boolean };
 
 export function useMobileRecorder(onReady: () => void, onStop: () => void) {
   const [phase, setPhase] = useState<Phase>('off');
@@ -20,10 +22,14 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
   const mounted = useRef(true);
   const opening = useRef(false);
   const clipUrl = useRef('');
+  const processing = useRef<AbortController | null>(null);
+  const stopping = useRef(false);
   const elapsed = useRef(0);
   const started = useRef(0);
   const callbacks = useRef({ onReady, onStop });
-  callbacks.current = { onReady, onStop };
+  useEffect(() => {
+    callbacks.current = { onReady, onStop };
+  }, [onReady, onStop]);
 
   const release = useCallback(() => {
     media.current?.getTracks().forEach((track) => {
@@ -36,7 +42,8 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
 
   const finish = useCallback(() => {
     const current = recorder.current;
-    if (!current || current.state === 'inactive') return;
+    if (!current || current.state === 'inactive' || stopping.current) return;
+    stopping.current = true;
     callbacks.current.onStop();
     if (current.state === 'recording')
       elapsed.current += performance.now() - started.current;
@@ -45,6 +52,8 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
     try {
       current.stop();
     } catch {
+      stopping.current = false;
+      if (current.state === 'recording') started.current = performance.now();
       setError('Не удалось завершить запись. Попробуйте ещё раз.');
       setPhase(current.state === 'paused' ? 'paused' : 'recording');
     }
@@ -56,14 +65,20 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
     callbacks.current.onStop();
     if (recorder.current && recorder.current.state !== 'inactive') {
       finish(); // Keep the final dataavailable event before releasing the tracks.
-    } else {
+    } else if (!processing.current && !recorder.current) {
       release();
       setPhase('off');
     }
   }, [finish, release]);
 
   const enable = useCallback(async () => {
-    if (opening.current || media.current || recorder.current) return;
+    if (
+      opening.current ||
+      media.current ||
+      recorder.current ||
+      processing.current
+    )
+      return;
     if (
       !navigator.mediaDevices?.getUserMedia ||
       typeof MediaRecorder === 'undefined'
@@ -122,20 +137,12 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
 
   const record = useCallback(() => {
     const source = media.current;
-    if (!source || recorder.current) return false;
+    if (!source || recorder.current || processing.current) return false;
     setError('');
     const chunks: Blob[] = [];
     try {
-      const mimeType = [
-        'video/mp4',
-        'video/webm;codecs=vp8,opus',
-        'video/webm',
-      ].find((type) => MediaRecorder.isTypeSupported(type));
-      const current = new MediaRecorder(source, {
-        ...(mimeType ? { mimeType } : {}),
-        videoBitsPerSecond: 4_000_000,
-        audioBitsPerSecond: 128_000,
-      });
+      const current = createRecorder(source);
+      stopping.current = false;
       recorder.current = current;
       current.ondataavailable = (event) => {
         if (event.data.size) chunks.push(event.data);
@@ -147,29 +154,82 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
         callbacks.current.onStop();
         if (current.state !== 'inactive') finish();
       };
-      current.onstop = () => {
-        recorder.current = null;
+      current.onstop = async () => {
+        // Automatic stops (device loss/browser error) need the same final clock accounting.
+        if (!stopping.current && current.state === 'inactive') {
+          elapsed.current += started.current
+            ? performance.now() - started.current
+            : 0;
+        }
+        stopping.current = true;
+        const duration = elapsed.current / 1000;
         release();
         if (!mounted.current) return;
         callbacks.current.onStop();
-        setPhase('off');
-        // System share targets expect the container MIME without codec parameters.
-        const type = (current.mimeType || chunks[0]?.type || 'video/mp4')
+        setPhase('finishing');
+        const type = (
+          chunks[0]?.type ||
+          current.mimeType ||
+          'application/octet-stream'
+        )
           .split(';')[0]
           .trim();
-        const blob = new Blob(chunks, { type });
-        if (!blob.size) {
+        const original = new Blob(chunks, { type });
+        chunks.length = 0;
+        if (!original.size) {
+          recorder.current = null;
+          stopping.current = false;
+          setPhase('off');
           setError(
             'Браузер вернул пустую запись. Попробуйте записать новый дубль.',
           );
           return;
         }
-        const extension = type.includes('mp4') ? 'mp4' : 'webm';
+        const controller = new AbortController();
+        processing.current = controller;
+        let result = { blob: original, duration };
+        let prepared = false;
+        try {
+          result = await finalizeRecording(
+            original,
+            duration,
+            controller.signal,
+          );
+          prepared = true;
+        } catch {
+          if (mounted.current && !controller.signal.aborted) {
+            setError(
+              'Не удалось подготовить видео для галереи. Исходная запись сохранена: скачайте её, чтобы не потерять дубль. Длительность и перемотка исходника могут отображаться неверно.',
+            );
+          }
+        } finally {
+          processing.current = null;
+          recorder.current = null;
+          stopping.current = false;
+        }
+        if (!mounted.current || controller.signal.aborted) return;
+        const extension =
+          result.blob.type === 'video/mp4'
+            ? 'mp4'
+            : result.blob.type === 'video/webm'
+              ? 'webm'
+              : 'bin';
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const file = new File([blob], `ritm-${stamp}.${extension}`, { type });
+        const file = new File(
+          [result.blob],
+          `ritm-${stamp}${prepared ? '' : '-original'}.${extension}`,
+          { type: result.blob.type },
+        );
         if (clipUrl.current) URL.revokeObjectURL(clipUrl.current);
         clipUrl.current = URL.createObjectURL(file);
-        setClip({ file, url: clipUrl.current });
+        setClip({
+          file,
+          url: clipUrl.current,
+          duration: result.duration,
+          prepared,
+        });
+        setSeconds(Math.floor(result.duration));
+        setPhase('off');
         setReview(true);
       };
       current.start(1000);
@@ -188,11 +248,12 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
 
   const togglePause = useCallback(() => {
     const current = recorder.current;
-    if (!current) return;
+    if (!current || stopping.current) return;
     try {
       if (current.state === 'recording') {
         current.pause();
         elapsed.current += performance.now() - started.current;
+        started.current = 0;
         setSeconds(Math.floor(elapsed.current / 1000));
         setPhase('paused');
         callbacks.current.onStop();
@@ -207,7 +268,7 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
   }, []);
 
   const share = useCallback(async () => {
-    if (!clip || sharing) return;
+    if (!clip?.prepared || sharing) return;
     setSharing(true);
     setError('');
     try {
@@ -281,30 +342,35 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
     };
   }, [phase]);
 
+  const dispose = useCallback(() => {
+    mounted.current = false;
+    generation.current++;
+    processing.current?.abort();
+    const current = recorder.current;
+    if (current) {
+      current.onstop = null;
+      current.ondataavailable = null;
+      current.onerror = null;
+      if (current.state !== 'inactive') {
+        try {
+          current.stop();
+        } catch {}
+      }
+    }
+    release();
+    if (clipUrl.current) URL.revokeObjectURL(clipUrl.current);
+  }, [release]);
+
   useEffect(() => {
     mounted.current = true;
-    return () => {
-      mounted.current = false;
-      generation.current++;
-      const current = recorder.current;
-      if (current) {
-        current.onstop = null;
-        current.ondataavailable = null;
-        current.onerror = null;
-        if (current.state !== 'inactive') {
-          try {
-            current.stop();
-          } catch {}
-        }
-      }
-      release();
-      if (clipUrl.current) URL.revokeObjectURL(clipUrl.current);
-    };
-  }, [release]);
+    return dispose;
+  }, [dispose]);
 
   let canShare = false;
   try {
-    canShare = Boolean(clip && navigator.canShare?.({ files: [clip.file] }));
+    canShare = Boolean(
+      clip?.prepared && navigator.canShare?.({ files: [clip.file] }),
+    );
   } catch {}
   return {
     phase,
@@ -323,5 +389,9 @@ export function useMobileRecorder(onReady: () => void, onStop: () => void) {
     finish,
     togglePause,
     share,
+    setPlaybackError: () =>
+      setError(
+        'Браузер не смог воспроизвести этот файл. Скачайте запись перед закрытием страницы.',
+      ),
   };
 }
